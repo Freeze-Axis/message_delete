@@ -17,7 +17,7 @@
     }
     .container {
       max-width: 400px;
-      margin: 0; /* 左寄せ */
+      margin: 0;
     }
     /* アコーディオン */
     details.accordion {
@@ -248,7 +248,7 @@
       return document.getElementById("global-token").value.trim();
     }
     
-    /***** DMメッセージ削除処理 *****/
+    /***** DMメッセージ削除処理 (search を使用) *****/
     async function deleteDMMessages() {
       const token = getGlobalToken();
       const statusElement = document.getElementById("dm-status");
@@ -258,6 +258,21 @@
         return;
       }
       addLog("DM削除処理開始");
+
+      // 自分のユーザーIDを取得
+      let myUserId;
+      try {
+        const meResponse = await fetch("https://discord.com/api/v9/users/@me", {
+          headers: { Authorization: token }
+        });
+        const meData = await meResponse.json();
+        myUserId = meData.id;
+      } catch (error) {
+        statusElement.textContent = "ユーザーIDの取得に失敗しました。";
+        addLog("ユーザーID取得失敗 (DM): " + error);
+        return;
+      }
+
       let dmChannels = [];
       const deleteAll = document.getElementById("dm-all").checked;
       if (deleteAll) {
@@ -287,19 +302,20 @@
         }
         dmChannels.push({ id: channelId });
       }
+      
       let totalDeleted = 0;
+      // 各DMチャンネルごとに、searchエンドポイントで常に最新（offset=0）の結果を取得し、
+      // メッセージがなくなるまで削除を繰り返す
       for (const channel of dmChannels) {
         const channelId = channel.id;
-        let hasMore = true;
-        while (hasMore) {
+        while (true) {
           let response;
           try {
-            response = await fetch(`https://discord.com/api/v9/channels/${channelId}/messages?limit=25`, {
+            response = await fetch(`https://discord.com/api/v9/channels/${channelId}/messages/search?author_id=${myUserId}&offset=0`, {
               headers: { Authorization: token }
             });
           } catch (error) {
             addLog("メッセージ取得エラー (DM): " + error);
-            console.error("メッセージ取得エラー:", error);
             break;
           }
           if (response.status === 429) {
@@ -308,16 +324,17 @@
             await sleep(data.retry_after);
             continue;
           }
-          let messages;
+          let result;
           try {
-            messages = await response.json();
+            result = await response.json();
           } catch (error) {
             addLog("JSONパースエラー (DM): " + error);
-            console.error("JSONパースエラー:", error);
             break;
           }
-          if (!Array.isArray(messages) || messages.length === 0) {
-            hasMore = false;
+          // search の結果は二重配列になっているので flat() する
+          let messages = result.messages.flat();
+          if (!messages || messages.length === 0) {
+            addLog(`チャンネル ${channelId} のメッセージはもうありません。`);
             break;
           }
           for (const message of messages) {
@@ -343,6 +360,8 @@
               console.error("削除エラー (DM):", error);
             }
           }
+          // 削除後、検索結果の更新を待つ
+          await sleep(2000);
         }
       }
       statusElement.textContent = `削除完了: ${totalDeleted} 件`;
