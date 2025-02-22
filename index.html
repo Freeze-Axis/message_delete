@@ -361,7 +361,7 @@
             }
           }
           // 削除後、検索結果の更新を待つ
-          await sleep(5000);
+          await sleep(0);
         }
       }
       statusElement.textContent = `削除完了: ${totalDeleted} 件`;
@@ -423,8 +423,10 @@
       for (const guildId of guildIds) {
         if (!serverAll && channelIds.length > 0) {
           for (const channelId of channelIds) {
-            while (true) {
-              const params = { author_id: AUTHOR_ID, offset: 0, channel_id: channelId };
+            let offset = 25; // 初期値を25に設定
+            let hasMore = true;
+            while (hasMore) {
+              const params = { author_id: AUTHOR_ID, offset: offset, channel_id: channelId };
               let response;
               try {
                 response = await axios.get(`https://discord.com/api/v9/guilds/${guildId}/messages/search`, {
@@ -437,7 +439,8 @@
                 break;
               }
               let messages = response.data.messages.flat();
-              if (messages.length === 0) break;
+              const totalResults = response.data.total_results;
+              if (messages.length === 0) { hasMore = false; break; }
               for (const message of messages) {
                 try {
                   await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
@@ -450,12 +453,15 @@
                   console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
                 }
               }
-              await sleep(5000);
+              offset += 25; // offsetを25加算
+              if (offset >= totalResults) { hasMore = false; break; }
             }
           }
         } else {
-          while (true) {
-            const params = { author_id: AUTHOR_ID, offset: 0 };
+          let offset = 25; // 初期値を25に設定
+          let hasMore = true;
+          while (hasMore) {
+            const params = { author_id: AUTHOR_ID, offset: offset };
             let response;
             try {
               response = await axios.get(`https://discord.com/api/v9/guilds/${guildId}/messages/search`, {
@@ -468,7 +474,8 @@
               break;
             }
             let messages = response.data.messages.flat();
-            if (messages.length === 0) break;
+            const totalResults = response.data.total_results;
+            if (messages.length === 0) { hasMore = false; break; }
             for (const message of messages) {
               try {
                 await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
@@ -481,7 +488,8 @@
                 console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
               }
             }
-            await sleep(0);
+            offset += 25; // offsetを25加算
+            if (offset >= totalResults) { hasMore = false; break; }
           }
         }
       }
