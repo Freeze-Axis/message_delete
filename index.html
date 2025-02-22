@@ -331,7 +331,6 @@
             addLog("JSONパースエラー (DM): " + error);
             break;
           }
-          // search の結果は二重配列になっているので flat() する
           let messages = result.messages.flat();
           if (!messages || messages.length === 0) {
             addLog(`チャンネル ${channelId} のメッセージはもうありません。`);
@@ -360,8 +359,7 @@
               console.error("削除エラー (DM):", error);
             }
           }
-          // 削除後、検索結果の更新の前に5秒待機
-          await sleep(5000);
+          await sleep(0);
         }
       }
       statusElement.textContent = `削除完了: ${totalDeleted} 件`;
@@ -423,10 +421,8 @@
       for (const guildId of guildIds) {
         if (!serverAll && channelIds.length > 0) {
           for (const channelId of channelIds) {
-            let offset = 0;
-            let hasMore = true;
-            while (hasMore) {
-              const params = { author_id: AUTHOR_ID, offset: offset, channel_id: channelId };
+            while (true) {
+              const params = { author_id: AUTHOR_ID, offset: 0, channel_id: channelId };
               let response;
               try {
                 response = await axios.get(`https://discord.com/api/v9/guilds/${guildId}/messages/search`, {
@@ -439,8 +435,7 @@
                 break;
               }
               let messages = response.data.messages.flat();
-              const totalResults = response.data.total_results;
-              if (messages.length === 0) { hasMore = false; break; }
+              if (messages.length === 0) { break; }
               for (const message of messages) {
                 try {
                   await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
@@ -453,17 +448,12 @@
                   console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
                 }
               }
-              // 削除後、検索結果の更新の前に5秒待機
-              await sleep(5000);
-              offset += 25;
-              if (offset >= totalResults) { hasMore = false; break; }
+              await sleep(0);
             }
           }
         } else {
-          let offset = 0;
-          let hasMore = true;
-          while (hasMore) {
-            const params = { author_id: AUTHOR_ID, offset: offset };
+          while (true) {
+            const params = { author_id: AUTHOR_ID, offset: 0 };
             let response;
             try {
               response = await axios.get(`https://discord.com/api/v9/guilds/${guildId}/messages/search`, {
@@ -476,8 +466,7 @@
               break;
             }
             let messages = response.data.messages.flat();
-            const totalResults = response.data.total_results;
-            if (messages.length === 0) { hasMore = false; break; }
+            if (messages.length === 0) { break; }
             for (const message of messages) {
               try {
                 await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
@@ -490,10 +479,7 @@
                 console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
               }
             }
-            // 削除後、検索結果の更新の前に5秒待機
-            await sleep(5000);
-            offset += 25;
-            if (offset >= totalResults) { hasMore = false; break; }
+            await sleep(0);
           }
         }
       }
