@@ -318,10 +318,11 @@
             addLog("メッセージ取得エラー (DM): " + error);
             break;
           }
+          // レート制限時は retry_after (秒) 待機
           if (response.status === 429) {
             const data = await response.json();
-            addLog("レートリミット (DM): " + data.retry_after + "ms");
-            await sleep(data.retry_after);
+            addLog("レートリミット (DM): " + data.retry_after + "秒待機");
+            await sleep(data.retry_after * 1000);
             continue;
           }
           let result;
@@ -338,27 +339,32 @@
             break;
           }
           for (const message of messages) {
-            try {
-              const deleteResponse = await fetch(`https://discord.com/api/v9/channels/${channelId}/messages/${message.id}`, {
-                method: "DELETE",
-                headers: { Authorization: token }
-              });
-              if (deleteResponse.status === 429) {
-                const rateData = await deleteResponse.json();
-                addLog("DM削除レート: " + rateData.retry_after + "ms");
-                await sleep(rateData.retry_after);
-                continue;
+            // 429エラーが出た際は、そのメッセージの削除を再試行する
+            while (true) {
+              try {
+                const deleteResponse = await fetch(`https://discord.com/api/v9/channels/${channelId}/messages/${message.id}`, {
+                  method: "DELETE",
+                  headers: { Authorization: token }
+                });
+                if (deleteResponse.status === 429) {
+                  const rateData = await deleteResponse.json();
+                  addLog("DM削除レート: " + rateData.retry_after + "秒待機");
+                  await sleep(rateData.retry_after * 1000);
+                  continue;
+                }
+                if (deleteResponse.ok) {
+                  totalDeleted++;
+                  statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
+                } else {
+                  console.error(`削除失敗 (DM): ${message.id} ステータス: ${deleteResponse.status}`);
+                }
+                break; // 成功または他エラーならループを抜ける
+              } catch (error) {
+                console.error("削除エラー (DM):", error);
+                break;
               }
-              if (deleteResponse.ok) {
-                totalDeleted++;
-                statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
-              } else {
-                console.error(`削除失敗 (DM): ${message.id} ステータス: ${deleteResponse.status}`);
-              }
-              await sleep(0);
-            } catch (error) {
-              console.error("削除エラー (DM):", error);
             }
+            await sleep(0);
           }
           // 削除後、検索結果の更新を待つ
           await sleep(0);
@@ -434,24 +440,50 @@
                   params: params
                 });
               } catch (error) {
-                addLog("メッセージ検索エラー (Server): " + error);
-                console.error(error);
-                break;
+                // 429 レート制限の場合は待機して再試行
+                if (error.response && error.response.status === 429) {
+                  const rateData = error.response.data;
+                  addLog("サーバー検索レート制限: " + rateData.retry_after + "秒待機");
+                  await sleep(rateData.retry_after * 1000);
+                  continue;
+                } else {
+                  addLog("メッセージ検索エラー (Server): " + error);
+                  console.error(error);
+                  break;
+                }
               }
               let messages = response.data.messages.flat();
               const totalResults = response.data.total_results;
               if (messages.length === 0) { hasMore = false; break; }
               for (const message of messages) {
-                try {
-                  await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
-                    headers: { Authorization: token }
-                  });
-                  totalDeleted++;
-                  statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
-                  await sleep(0);
-                } catch (error) {
-                  console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
+                // axios.delete でもレート制限を考慮して再試行
+                while (true) {
+                  try {
+                    const deleteResponse = await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
+                      headers: { Authorization: token }
+                    });
+                    if (deleteResponse.status === 429) {
+                      const rateData = deleteResponse.data;
+                      addLog("サーバー削除レート制限: " + rateData.retry_after + "秒待機");
+                      await sleep(rateData.retry_after * 1000);
+                      continue;
+                    }
+                    totalDeleted++;
+                    statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
+                    break;
+                  } catch (error) {
+                    if (error.response && error.response.status === 429) {
+                      const rateData = error.response.data;
+                      addLog("サーバー削除レート制限: " + rateData.retry_after + "秒待機");
+                      await sleep(rateData.retry_after * 1000);
+                      continue;
+                    } else {
+                      console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
+                      break;
+                    }
+                  }
                 }
+                await sleep(0);
               }
               offset += 25;
               if (offset >= totalResults) { hasMore = false; break; }
@@ -469,24 +501,48 @@
                 params: params
               });
             } catch (error) {
-              addLog("全Guildメッセージ検索エラー (Server): " + error);
-              console.error(error);
-              break;
+              if (error.response && error.response.status === 429) {
+                const rateData = error.response.data;
+                addLog("全Guild検索レート制限: " + rateData.retry_after + "秒待機");
+                await sleep(rateData.retry_after * 1000);
+                continue;
+              } else {
+                addLog("全Guildメッセージ検索エラー (Server): " + error);
+                console.error(error);
+                break;
+              }
             }
             let messages = response.data.messages.flat();
             const totalResults = response.data.total_results;
             if (messages.length === 0) { hasMore = false; break; }
             for (const message of messages) {
-              try {
-                await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
-                  headers: { Authorization: token }
-                });
-                totalDeleted++;
-                statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
-                await sleep(0);
-              } catch (error) {
-                console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
+              while (true) {
+                try {
+                  const deleteResponse = await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
+                    headers: { Authorization: token }
+                  });
+                  if (deleteResponse.status === 429) {
+                    const rateData = deleteResponse.data;
+                    addLog("全Guild削除レート制限: " + rateData.retry_after + "秒待機");
+                    await sleep(rateData.retry_after * 1000);
+                    continue;
+                  }
+                  totalDeleted++;
+                  statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
+                  break;
+                } catch (error) {
+                  if (error.response && error.response.status === 429) {
+                    const rateData = error.response.data;
+                    addLog("全Guild削除レート制限: " + rateData.retry_after + "秒待機");
+                    await sleep(rateData.retry_after * 1000);
+                    continue;
+                  } else {
+                    console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
+                    break;
+                  }
+                }
               }
+              await sleep(0);
             }
             offset += 25;
             if (offset >= totalResults) { hasMore = false; break; }
