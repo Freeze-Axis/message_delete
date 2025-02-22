@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html> 
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
@@ -422,7 +422,6 @@
       let totalDeleted = 0;
       for (const guildId of guildIds) {
         if (!serverAll && channelIds.length > 0) {
-          // 特定のチャンネルの場合、各チャンネルで常に最新(offset=0)の検索結果を取得
           for (const channelId of channelIds) {
             while (true) {
               const params = { author_id: AUTHOR_ID, offset: 0, channel_id: channelId };
@@ -438,7 +437,7 @@
                 break;
               }
               let messages = response.data.messages.flat();
-              if (messages.length === 0) { break; }
+              if (messages.length === 0) break;
               for (const message of messages) {
                 try {
                   await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
@@ -451,12 +450,10 @@
                   console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
                 }
               }
-              // 検索結果の更新を待つ
               await sleep(0);
             }
           }
         } else {
-          // 全チャンネルの場合も常に最新(offset=0)の結果を取得
           while (true) {
             const params = { author_id: AUTHOR_ID, offset: 0 };
             let response;
@@ -471,7 +468,7 @@
               break;
             }
             let messages = response.data.messages.flat();
-            if (messages.length === 0) { break; }
+            if (messages.length === 0) break;
             for (const message of messages) {
               try {
                 await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
