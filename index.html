@@ -361,7 +361,7 @@
             }
           }
           // 削除後、検索結果の更新を待つ
-          await sleep(0);
+          await sleep(5000);
         }
       }
       statusElement.textContent = `削除完了: ${totalDeleted} 件`;
@@ -450,7 +450,7 @@
                   console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
                 }
               }
-              await sleep(0);
+              await sleep(5000);
             }
           }
         } else {
