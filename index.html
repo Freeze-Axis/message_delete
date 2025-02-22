@@ -360,8 +360,8 @@
               console.error("削除エラー (DM):", error);
             }
           }
-          // 削除後、検索結果の更新を待つ
-          await sleep(0);
+          // 削除後、検索結果の更新の前に5秒待機
+          await sleep(5000);
         }
       }
       statusElement.textContent = `削除完了: ${totalDeleted} 件`;
@@ -423,7 +423,7 @@
       for (const guildId of guildIds) {
         if (!serverAll && channelIds.length > 0) {
           for (const channelId of channelIds) {
-            let offset = 25; // 初期値を25に設定
+            let offset = 0;
             let hasMore = true;
             while (hasMore) {
               const params = { author_id: AUTHOR_ID, offset: offset, channel_id: channelId };
@@ -453,12 +453,14 @@
                   console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
                 }
               }
-              offset += 25; // offsetを25加算
+              // 削除後、検索結果の更新の前に5秒待機
+              await sleep(5000);
+              offset += 25;
               if (offset >= totalResults) { hasMore = false; break; }
             }
           }
         } else {
-          let offset = 25; // 初期値を25に設定
+          let offset = 0;
           let hasMore = true;
           while (hasMore) {
             const params = { author_id: AUTHOR_ID, offset: offset };
@@ -488,7 +490,9 @@
                 console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
               }
             }
-            offset += 25; // offsetを25加算
+            // 削除後、検索結果の更新の前に5秒待機
+            await sleep(5000);
+            offset += 25;
             if (offset >= totalResults) { hasMore = false; break; }
           }
         }
