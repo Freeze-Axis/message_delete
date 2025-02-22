@@ -363,7 +363,8 @@
             }
             await sleep(0);
           }
-          await sleep(0);
+          // 待機を入れて検索インデックスの更新を待つ
+          await sleep(5000);
         }
       }
       statusElement.textContent = `削除完了: ${totalDeleted} 件`;
@@ -423,6 +424,7 @@
       }
       let totalDeleted = 0;
       for (const guildId of guildIds) {
+        // 特定チャンネル指定の場合
         if (!serverAll && channelIds.length > 0) {
           for (const channelId of channelIds) {
             while (true) {
@@ -476,10 +478,12 @@
                 }
                 await sleep(0);
               }
-              await sleep(0);
+              // 待機を入れて検索インデックス更新待ち
+              await sleep(5000);
             }
           }
         } else {
+          // 全Guild／全チャンネルの場合
           while (true) {
             const params = { author_id: AUTHOR_ID, offset: 0 };
             let response;
@@ -531,7 +535,7 @@
               }
               await sleep(0);
             }
-            await sleep(0);
+            await sleep(1000);
           }
         }
       }
