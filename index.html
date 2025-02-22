@@ -168,7 +168,7 @@
     /***** localStorage 関連 *****/
     function saveInput(id) {
       const el = document.getElementById(id);
-      if(el) localStorage.setItem(id, el.value);
+      if (el) localStorage.setItem(id, el.value);
     }
     function loadInput(id) {
       const el = document.getElementById(id);
@@ -179,7 +179,7 @@
     }
     function saveCheckbox(id) {
       const el = document.getElementById(id);
-      if(el) localStorage.setItem(id, el.checked);
+      if (el) localStorage.setItem(id, el.checked);
     }
     function loadCheckbox(id) {
       const el = document.getElementById(id);
@@ -205,9 +205,9 @@
       const accToken = document.getElementById("accordion-token");
       const accDM = document.getElementById("accordion-dm");
       const accServer = document.getElementById("accordion-server");
-      if(loadAccordionState("accordion-token")) accToken.setAttribute("open", "");
-      if(loadAccordionState("accordion-dm")) accDM.setAttribute("open", "");
-      if(loadAccordionState("accordion-server")) accServer.setAttribute("open", "");
+      if (loadAccordionState("accordion-token")) accToken.setAttribute("open", "");
+      if (loadAccordionState("accordion-dm")) accDM.setAttribute("open", "");
+      if (loadAccordionState("accordion-server")) accServer.setAttribute("open", "");
       updateDMChannelVisibility();
       updateServerInputVisibility();
     });
@@ -304,14 +304,16 @@
       }
       
       let totalDeleted = 0;
-      // 各DMチャンネルごとに、searchエンドポイントで常に最新（offset=0）の結果を取得し、
+      // 各DMチャンネルごとに、searchエンドポイントで offset を25単位で取得し、
       // メッセージがなくなるまで削除を繰り返す
       for (const channel of dmChannels) {
         const channelId = channel.id;
+        let offset = 0;
+        let passDeleted = 0;
         while (true) {
           let response;
           try {
-            response = await fetch(`https://discord.com/api/v9/channels/${channelId}/messages/search?author_id=${myUserId}&offset=0`, {
+            response = await fetch(`https://discord.com/api/v9/channels/${channelId}/messages/search?author_id=${myUserId}&offset=${offset}`, {
               headers: { Authorization: token }
             });
           } catch (error) {
@@ -351,6 +353,7 @@
                 }
                 if (deleteResponse.ok) {
                   totalDeleted++;
+                  passDeleted++;
                   statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
                 } else {
                   console.error(`削除失敗 (DM): ${message.id} ステータス: ${deleteResponse.status}`);
@@ -363,8 +366,15 @@
             }
             await sleep(0);
           }
-          // 待機を入れて検索インデックスの更新を待つ
-          await sleep(5000);
+          offset += 25;
+          // APIが返す総件数が更新されている場合、offsetがそれ以上ならパス終了
+          if (offset >= result.total_results) {
+            // 削除が全く行われなかったパスならループ終了（無限ループ防止）
+            if (passDeleted === 0) break;
+            offset = 0;
+            passDeleted = 0;
+          }
+          await sleep(1000);
         }
       }
       statusElement.textContent = `削除完了: ${totalDeleted} 件`;
@@ -427,13 +437,14 @@
         // 特定チャンネル指定の場合
         if (!serverAll && channelIds.length > 0) {
           for (const channelId of channelIds) {
+            let offset = 0;
+            let passDeleted = 0;
             while (true) {
-              const params = { author_id: AUTHOR_ID, offset: 0, channel_id: channelId };
               let response;
               try {
                 response = await axios.get(`https://discord.com/api/v9/guilds/${guildId}/messages/search`, {
                   headers: { Authorization: token },
-                  params: params
+                  params: { author_id: AUTHOR_ID, offset: offset, channel_id: channelId }
                 });
               } catch (error) {
                 if (error.response && error.response.status === 429) {
@@ -448,7 +459,8 @@
                 }
               }
               let messages = response.data.messages.flat();
-              if (messages.length === 0) { break; }
+              let totalResults = response.data.total_results;
+              if (messages.length === 0) break;
               for (const message of messages) {
                 while (true) {
                   try {
@@ -462,6 +474,7 @@
                       continue;
                     }
                     totalDeleted++;
+                    passDeleted++;
                     statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
                     break;
                   } catch (error) {
@@ -478,19 +491,24 @@
                 }
                 await sleep(0);
               }
-              // 待機を入れて検索インデックス更新待ち
-              await sleep(5000);
+              offset += 25;
+              if (offset >= totalResults) {
+                offset = 0;
+                if (passDeleted === 0) break;
+                passDeleted = 0;
+              }
+              await sleep(1000);
             }
           }
         } else {
-          // 全Guild／全チャンネルの場合
+          let offset = 0;
+          let passDeleted = 0;
           while (true) {
-            const params = { author_id: AUTHOR_ID, offset: 0 };
             let response;
             try {
               response = await axios.get(`https://discord.com/api/v9/guilds/${guildId}/messages/search`, {
                 headers: { Authorization: token },
-                params: params
+                params: { author_id: AUTHOR_ID, offset: offset }
               });
             } catch (error) {
               if (error.response && error.response.status === 429) {
@@ -505,7 +523,8 @@
               }
             }
             let messages = response.data.messages.flat();
-            if (messages.length === 0) { break; }
+            let totalResults = response.data.total_results;
+            if (messages.length === 0) break;
             for (const message of messages) {
               while (true) {
                 try {
@@ -519,6 +538,7 @@
                     continue;
                   }
                   totalDeleted++;
+                  passDeleted++;
                   statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
                   break;
                 } catch (error) {
@@ -534,6 +554,12 @@
                 }
               }
               await sleep(0);
+            }
+            offset += 25;
+            if (offset >= totalResults) {
+              offset = 0;
+              if (passDeleted === 0) break;
+              passDeleted = 0;
             }
             await sleep(1000);
           }
