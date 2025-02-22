@@ -355,7 +355,7 @@
               } else {
                 console.error(`削除失敗 (DM): ${message.id} ステータス: ${deleteResponse.status}`);
               }
-              await sleep(1000);
+              await sleep(0);
             } catch (error) {
               console.error("削除エラー (DM):", error);
             }
