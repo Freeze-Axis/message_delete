@@ -426,17 +426,19 @@
         return;
       }
       let totalDeleted = 0;
+      
+      // 各Guildについて処理
       for (const guildId of guildIds) {
-        // 特定のチャンネルが指定されている場合
         if (!serverAll && channelIds.length > 0) {
+          // 特定チャンネルの場合：各チャンネルごとに外側ループで offset=0 で検索、内側でページングして削除
           for (const channelId of channelIds) {
-            // 削除すべきメッセージがなくなるまで、offsetは常に0で検索する
             while (true) {
-              let response;
+              // 外側ループ：まず offset=0 で全件検索
+              let outerResponse;
               try {
-                response = await axios.get(`https://discord.com/api/v9/guilds/${guildId}/messages/search`, {
+                outerResponse = await axios.get(`https://discord.com/api/v9/guilds/${guildId}/messages/search`, {
                   headers: { Authorization: token },
-                  params: { author_id: AUTHOR_ID, offset: 0, channel_id: channelId }
+                  params: { author_id: AUTHOR_ID, channel_id: channelId, offset: 0 }
                 });
               } catch (error) {
                 if (error.response && error.response.status === 429) {
@@ -450,50 +452,81 @@
                   break;
                 }
               }
-              const messages = response.data.messages.flat();
-              if (!messages || messages.length === 0) {
+              const outerMessages = outerResponse.data.messages.flat();
+              if (!outerMessages || outerMessages.length === 0) {
                 addLog(`チャンネル ${channelId} のメッセージはもうありません。`);
                 break;
               }
-              for (const message of messages) {
-                while (true) {
-                  try {
-                    const deleteResponse = await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
-                      headers: { Authorization: token }
-                    });
-                    if (deleteResponse.status === 429) {
-                      const rateData = deleteResponse.data;
-                      addLog("サーバー削除レート制限: " + rateData.retry_after + "秒待機");
-                      await sleep(rateData.retry_after * 1000);
-                      continue;
-                    }
-                    totalDeleted++;
-                    statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
+              // 内側ループ：offset を 25 刻みで全ページ巡回
+              let offset = 0;
+              let innerHasMore = true;
+              while (innerHasMore) {
+                let innerResponse;
+                try {
+                  innerResponse = await axios.get(`https://discord.com/api/v9/guilds/${guildId}/messages/search`, {
+                    headers: { Authorization: token },
+                    params: { author_id: AUTHOR_ID, channel_id: channelId, offset: offset }
+                  });
+                } catch (error) {
+                  if (error.response && error.response.status === 429) {
+                    const rateData = error.response.data;
+                    addLog("サーバー検索レート制限: " + rateData.retry_after + "秒待機");
+                    await sleep(rateData.retry_after * 1000);
+                    continue;
+                  } else {
+                    addLog("メッセージ検索エラー (Server): " + error);
+                    console.error(error);
                     break;
-                  } catch (error) {
-                    if (error.response && error.response.status === 429) {
-                      const rateData = error.response.data;
-                      addLog("サーバー削除レート制限: " + rateData.retry_after + "秒待機");
-                      await sleep(rateData.retry_after * 1000);
-                      continue;
-                    } else {
-                      console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
-                      break;
-                    }
                   }
                 }
-                await sleep(0);
+                const innerMessages = innerResponse.data.messages.flat();
+                const innerTotal = innerResponse.data.total_results;
+                if (!innerMessages || innerMessages.length === 0) {
+                  innerHasMore = false;
+                  break;
+                }
+                for (const message of innerMessages) {
+                  while (true) {
+                    try {
+                      const deleteResponse = await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
+                        headers: { Authorization: token }
+                      });
+                      if (deleteResponse.status === 429) {
+                        const rateData = deleteResponse.data;
+                        addLog("サーバー削除レート制限: " + rateData.retry_after + "秒待機");
+                        await sleep(rateData.retry_after * 1000);
+                        continue;
+                      }
+                      totalDeleted++;
+                      statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
+                      break;
+                    } catch (error) {
+                      if (error.response && error.response.status === 429) {
+                        const rateData = error.response.data;
+                        addLog("サーバー削除レート制限: " + rateData.retry_after + "秒待機");
+                        await sleep(rateData.retry_after * 1000);
+                        continue;
+                      } else {
+                        console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
+                        break;
+                      }
+                    }
+                  }
+                  await sleep(0);
+                }
+                offset += 25;
+                if (offset >= innerTotal) { innerHasMore = false; break; }
               }
-              // 次の検索前に少し待機
+              // 外側ループ終了後、再度 offset=0 で検索して残件があればループ継続
               await sleep(1000);
             }
           }
         } else {
-          // 全チャンネルの場合は、offset=0で毎回最新を検索
+          // 全チャンネルの場合：Guild 単位で外側ループ（offset=0 の検索）＋内側ループ（ページング）
           while (true) {
-            let response;
+            let outerResponse;
             try {
-              response = await axios.get(`https://discord.com/api/v9/guilds/${guildId}/messages/search`, {
+              outerResponse = await axios.get(`https://discord.com/api/v9/guilds/${guildId}/messages/search`, {
                 headers: { Authorization: token },
                 params: { author_id: AUTHOR_ID, offset: 0 }
               });
@@ -509,40 +542,71 @@
                 break;
               }
             }
-            const messages = response.data.messages.flat();
-            if (!messages || messages.length === 0) {
+            const outerMessages = outerResponse.data.messages.flat();
+            if (!outerMessages || outerMessages.length === 0) {
               addLog(`Guild ${guildId} のメッセージはもうありません。`);
               break;
             }
-            for (const message of messages) {
-              while (true) {
-                try {
-                  const deleteResponse = await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
-                    headers: { Authorization: token }
-                  });
-                  if (deleteResponse.status === 429) {
-                    const rateData = deleteResponse.data;
-                    addLog("全Guild削除レート制限: " + rateData.retry_after + "秒待機");
-                    await sleep(rateData.retry_after * 1000);
-                    continue;
-                  }
-                  totalDeleted++;
-                  statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
+            let offset = 0;
+            let innerHasMore = true;
+            while (innerHasMore) {
+              let innerResponse;
+              try {
+                innerResponse = await axios.get(`https://discord.com/api/v9/guilds/${guildId}/messages/search`, {
+                  headers: { Authorization: token },
+                  params: { author_id: AUTHOR_ID, offset: offset }
+                });
+              } catch (error) {
+                if (error.response && error.response.status === 429) {
+                  const rateData = error.response.data;
+                  addLog("全Guild検索レート制限: " + rateData.retry_after + "秒待機");
+                  await sleep(rateData.retry_after * 1000);
+                  continue;
+                } else {
+                  addLog("全Guildメッセージ検索エラー (Server): " + error);
+                  console.error(error);
                   break;
-                } catch (error) {
-                  if (error.response && error.response.status === 429) {
-                    const rateData = error.response.data;
-                    addLog("全Guild削除レート制限: " + rateData.retry_after + "秒待機");
-                    await sleep(rateData.retry_after * 1000);
-                    continue;
-                  } else {
-                    console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
-                    break;
-                  }
                 }
               }
-              await sleep(0);
+              const innerMessages = innerResponse.data.messages.flat();
+              const innerTotal = innerResponse.data.total_results;
+              if (!innerMessages || innerMessages.length === 0) {
+                innerHasMore = false;
+                break;
+              }
+              for (const message of innerMessages) {
+                while (true) {
+                  try {
+                    const deleteResponse = await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
+                      headers: { Authorization: token }
+                    });
+                    if (deleteResponse.status === 429) {
+                      const rateData = deleteResponse.data;
+                      addLog("全Guild削除レート制限: " + rateData.retry_after + "秒待機");
+                      await sleep(rateData.retry_after * 1000);
+                      continue;
+                    }
+                    totalDeleted++;
+                    statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
+                    break;
+                  } catch (error) {
+                    if (error.response && error.response.status === 429) {
+                      const rateData = error.response.data;
+                      addLog("全Guild削除レート制限: " + rateData.retry_after + "秒待機");
+                      await sleep(rateData.retry_after * 1000);
+                      continue;
+                    } else {
+                      console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
+                      break;
+                    }
+                  }
+                }
+                await sleep(0);
+              }
+              offset += 25;
+              if (offset >= innerTotal) { innerHasMore = false; break; }
             }
+            // 外側ループ：再検索して何もなければ終了
             await sleep(1000);
           }
         }
