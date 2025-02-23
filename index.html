@@ -248,7 +248,7 @@
       return document.getElementById("global-token").value.trim();
     }
     
-    /***** DMメッセージ削除処理 (search を使用) *****/
+    /***** DMメッセージ削除処理（改良版） *****/
     async function deleteDMMessages() {
       const token = getGlobalToken();
       const statusElement = document.getElementById("dm-status");
@@ -262,11 +262,10 @@
       // 自分のユーザーIDを取得
       let myUserId;
       try {
-        const meResponse = await fetch("https://discord.com/api/v9/users/@me", {
+        const response = await axios.get("https://discord.com/api/v9/users/@me", {
           headers: { Authorization: token }
         });
-        const meData = await meResponse.json();
-        myUserId = meData.id;
+        myUserId = response.data.id;
       } catch (error) {
         statusElement.textContent = "ユーザーIDの取得に失敗しました。";
         addLog("ユーザーID取得失敗 (DM): " + error);
@@ -277,10 +276,10 @@
       const deleteAll = document.getElementById("dm-all").checked;
       if (deleteAll) {
         try {
-          const response = await fetch("https://discord.com/api/v9/users/@me/channels", {
+          const response = await axios.get("https://discord.com/api/v9/users/@me/channels", {
             headers: { Authorization: token }
           });
-          dmChannels = await response.json();
+          dmChannels = response.data;
           if (!Array.isArray(dmChannels)) {
             statusElement.textContent = "DMチャンネルの取得に失敗しました。";
             addLog("DMチャンネル取得失敗");
@@ -304,71 +303,79 @@
       }
       
       let totalDeleted = 0;
-      // 各DMチャンネルごとに、searchエンドポイントで常に最新（offset=0）の結果を取得し、
-      // メッセージがなくなるまで削除を繰り返す
+      // 各DMチャンネルごとに、外側ループで完全削除が完了するまで繰り返す
       for (const channel of dmChannels) {
         const channelId = channel.id;
         while (true) {
-          let response;
-          try {
-            response = await fetch(`https://discord.com/api/v9/channels/${channelId}/messages/search?author_id=${myUserId}&offset=0`, {
-              headers: { Authorization: token }
-            });
-          } catch (error) {
-            addLog("メッセージ取得エラー (DM): " + error);
-            break;
-          }
-          if (response.status === 429) {
-            const data = await response.json();
-            addLog("レートリミット (DM): " + data.retry_after + "ms");
-            await sleep(data.retry_after);
-            continue;
-          }
-          let result;
-          try {
-            result = await response.json();
-          } catch (error) {
-            addLog("JSONパースエラー (DM): " + error);
-            break;
-          }
-          // search の結果は二重配列になっているので flat() する
-          let messages = result.messages.flat();
-          if (!messages || messages.length === 0) {
-            addLog(`チャンネル ${channelId} のメッセージはもうありません。`);
-            break;
-          }
-          for (const message of messages) {
+          let offset = 0;
+          let hasMoreMessages = true;
+          const endpoint = `https://discord.com/api/v9/channels/${channelId}/messages/search`;
+          // 内側ループ：offsetごとにメッセージ取得＆削除
+          while (hasMoreMessages) {
+            let response;
             try {
-              const deleteResponse = await fetch(`https://discord.com/api/v9/channels/${channelId}/messages/${message.id}`, {
-                method: "DELETE",
-                headers: { Authorization: token }
+              response = await axios.get(endpoint, {
+                headers: { Authorization: token },
+                params: { author_id: myUserId, offset: offset }
               });
-              if (deleteResponse.status === 429) {
-                const rateData = await deleteResponse.json();
-                addLog("DM削除レート: " + rateData.retry_after + "ms");
-                await sleep(rateData.retry_after);
-                continue;
-              }
-              if (deleteResponse.ok) {
+            } catch (error) {
+              addLog("メッセージ検索エラー (DM): " + error);
+              console.error(error);
+              hasMoreMessages = false;
+              break;
+            }
+            const messages = response.data.messages.flat();
+            const totalResults = response.data.total_results;
+            console.log(`Total messages in DM channel: ${totalResults}`);
+            console.log(`Current offset: ${offset}`);
+            console.log(`Messages fetched: ${messages.length}`);
+            if (messages.length === 0) {
+              addLog(`Channel ${channelId} のメッセージはもうありません。`);
+              hasMoreMessages = false;
+              break;
+            }
+            for (const message of messages) {
+              try {
+                await axios.delete(`https://discord.com/api/v9/channels/${channelId}/messages/${message.id}`, {
+                  headers: { Authorization: token }
+                });
+                console.log(`Deleted message ID: ${message.id}`);
                 totalDeleted++;
                 statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
-              } else {
-                console.error(`削除失敗 (DM): ${message.id} ステータス: ${deleteResponse.status}`);
+                await sleep(0);
+              } catch (error) {
+                console.error(`削除失敗 (DM): ${message.id}`, error.response?.data || error.message);
               }
-              await sleep(0);
-            } catch (error) {
-              console.error("削除エラー (DM):", error);
             }
+            offset += 25;
+            if (offset >= totalResults) break;
           }
-          // 削除後、検索結果の更新を待つ
-          await sleep(0);
+          // 削除パス終了後、再取得して残メッセージがなければループ抜ける
+          let remainingResponse;
+          try {
+            remainingResponse = await axios.get(endpoint, {
+              headers: { Authorization: token },
+              params: { author_id: myUserId, offset: 0 }
+            });
+          } catch (error) {
+            addLog("再取得エラー (DM): " + error);
+            console.error(error);
+            break;
+          }
+          const remainingMessages = remainingResponse.data.messages.flat();
+          if (remainingMessages.length === 0) {
+            addLog(`Channel ${channelId} の全メッセージ削除完了。`);
+            break;
+          } else {
+            addLog(`Channel ${channelId} にまだ ${remainingMessages.length} 件のメッセージがあります。再試行します。`);
+          }
         }
       }
       statusElement.textContent = `削除完了: ${totalDeleted} 件`;
       addLog("DM削除完了: " + totalDeleted + "件");
     }
     
-    /***** サーバーメッセージ削除処理（上記と同じ動作に変更） *****/
+    /***** サーバーメッセージ削除処理（改良版） *****/
     document.getElementById("server-startBtn").addEventListener("click", async () => {
       const token = getGlobalToken();
       const statusElement = document.getElementById("server-status");
@@ -423,10 +430,8 @@
       
       // 各ギルドについて処理
       for (const guildId of guildIds) {
-        // 特定チャンネル指定がある場合
         if (!serverAll && channelIds.length > 0) {
           for (const channelId of channelIds) {
-            // 外側のループ：削除パスを繰り返す
             while (true) {
               let offset = 0;
               let hasMoreMessages = true;
@@ -449,10 +454,10 @@
                 console.log(`Total messages in server: ${totalResults}`);
                 console.log(`Current offset: ${offset}`);
                 console.log(`Messages fetched: ${messages.length}`);
-                if (messages.length === 0) {
+                if (messages.length === 0) { 
                   addLog(`Channel ${channelId} のメッセージはもうありません。`);
                   hasMoreMessages = false;
-                  break;
+                  break; 
                 }
                 for (const message of messages) {
                   try {
@@ -462,7 +467,7 @@
                     console.log(`Deleted message ID: ${message.id}`);
                     totalDeleted++;
                     statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
-                    await sleep(2000);
+                    await sleep(0);
                   } catch (error) {
                     console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
                   }
@@ -470,7 +475,6 @@
                 offset += 25;
                 if (offset >= totalResults) { break; }
               }
-              // 再取得して、残っているメッセージがなければ抜ける
               let remainingResponse;
               try {
                 remainingResponse = await axios.get(endpoint, {
@@ -492,7 +496,6 @@
             }
           }
         } else {
-          // 全チャンネル対象の場合
           while (true) {
             let offset = 0;
             let hasMoreMessages = true;
@@ -505,7 +508,7 @@
                   params: { author_id: AUTHOR_ID, offset: offset }
                 });
               } catch (error) {
-                addLog("メッセージ検索エラー (Server): " + error);
+                addLog("全Guildメッセージ検索エラー (Server): " + error);
                 console.error(error);
                 hasMoreMessages = false;
                 break;
@@ -515,10 +518,10 @@
               console.log(`Total messages in server: ${totalResults}`);
               console.log(`Current offset: ${offset}`);
               console.log(`Messages fetched: ${messages.length}`);
-              if (messages.length === 0) {
+              if (messages.length === 0) { 
                 addLog(`Guild ${guildId} のメッセージはもうありません。`);
                 hasMoreMessages = false;
-                break;
+                break; 
               }
               for (const message of messages) {
                 try {
@@ -528,7 +531,7 @@
                   console.log(`Deleted message ID: ${message.id}`);
                   totalDeleted++;
                   statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
-                  await sleep(2000);
+                  await sleep(0);
                 } catch (error) {
                   console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
                 }
@@ -536,7 +539,6 @@
               offset += 25;
               if (offset >= totalResults) { break; }
             }
-            // 再取得して、残っているメッセージがなければ抜ける
             let remainingResponse;
             try {
               remainingResponse = await axios.get(endpoint, {
