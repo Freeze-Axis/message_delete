@@ -368,7 +368,7 @@
       addLog("DM削除完了: " + totalDeleted + "件");
     }
     
-    /***** サーバーメッセージ削除処理 *****/
+    /***** サーバーメッセージ削除処理（上記と同じ動作に変更） *****/
     document.getElementById("server-startBtn").addEventListener("click", async () => {
       const token = getGlobalToken();
       const statusElement = document.getElementById("server-status");
@@ -377,7 +377,7 @@
         addLog("Bot Token未入力 (Server)");
         return;
       }
-      addLog("サーバー削除処理開始");
+      addLog("サーバーメッセージ削除処理開始");
       const serverAll = document.getElementById("server-all").checked;
       let guildIds = [];
       let channelIds = [];
@@ -420,81 +420,146 @@
         return;
       }
       let totalDeleted = 0;
+      
+      // 各ギルドについて処理
       for (const guildId of guildIds) {
+        // 特定チャンネル指定がある場合
         if (!serverAll && channelIds.length > 0) {
           for (const channelId of channelIds) {
+            // 外側のループ：削除パスを繰り返す
+            while (true) {
+              let offset = 0;
+              let hasMoreMessages = true;
+              const endpoint = `https://discord.com/api/v9/guilds/${guildId}/messages/search`;
+              while (hasMoreMessages) {
+                let response;
+                try {
+                  response = await axios.get(endpoint, {
+                    headers: { Authorization: token },
+                    params: { author_id: AUTHOR_ID, offset: offset, channel_id: channelId }
+                  });
+                } catch (error) {
+                  addLog("メッセージ検索エラー (Server): " + error);
+                  console.error(error);
+                  hasMoreMessages = false;
+                  break;
+                }
+                const messages = response.data.messages.flat();
+                const totalResults = response.data.total_results;
+                console.log(`Total messages in server: ${totalResults}`);
+                console.log(`Current offset: ${offset}`);
+                console.log(`Messages fetched: ${messages.length}`);
+                if (messages.length === 0) {
+                  addLog(`Channel ${channelId} のメッセージはもうありません。`);
+                  hasMoreMessages = false;
+                  break;
+                }
+                for (const message of messages) {
+                  try {
+                    await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
+                      headers: { Authorization: token }
+                    });
+                    console.log(`Deleted message ID: ${message.id}`);
+                    totalDeleted++;
+                    statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
+                    await sleep(2000);
+                  } catch (error) {
+                    console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
+                  }
+                }
+                offset += 25;
+                if (offset >= totalResults) { break; }
+              }
+              // 再取得して、残っているメッセージがなければ抜ける
+              let remainingResponse;
+              try {
+                remainingResponse = await axios.get(endpoint, {
+                  headers: { Authorization: token },
+                  params: { author_id: AUTHOR_ID, offset: 0, channel_id: channelId }
+                });
+              } catch (error) {
+                addLog("再取得エラー (Server): " + error);
+                console.error(error);
+                break;
+              }
+              const remainingMessages = remainingResponse.data.messages.flat();
+              if (remainingMessages.length === 0) {
+                addLog(`Channel ${channelId} の全メッセージ削除完了。`);
+                break;
+              } else {
+                addLog(`Channel ${channelId} にまだ ${remainingMessages.length} 件のメッセージがあります。再試行します。`);
+              }
+            }
+          }
+        } else {
+          // 全チャンネル対象の場合
+          while (true) {
             let offset = 0;
-            let hasMore = true;
-            while (hasMore) {
-              const params = { author_id: AUTHOR_ID, offset: offset, channel_id: channelId };
+            let hasMoreMessages = true;
+            const endpoint = `https://discord.com/api/v9/guilds/${guildId}/messages/search`;
+            while (hasMoreMessages) {
               let response;
               try {
-                response = await axios.get(`https://discord.com/api/v9/guilds/${guildId}/messages/search`, {
+                response = await axios.get(endpoint, {
                   headers: { Authorization: token },
-                  params: params
+                  params: { author_id: AUTHOR_ID, offset: offset }
                 });
               } catch (error) {
                 addLog("メッセージ検索エラー (Server): " + error);
                 console.error(error);
+                hasMoreMessages = false;
                 break;
               }
-              let messages = response.data.messages.flat();
+              const messages = response.data.messages.flat();
               const totalResults = response.data.total_results;
-              if (messages.length === 0) { hasMore = false; break; }
+              console.log(`Total messages in server: ${totalResults}`);
+              console.log(`Current offset: ${offset}`);
+              console.log(`Messages fetched: ${messages.length}`);
+              if (messages.length === 0) {
+                addLog(`Guild ${guildId} のメッセージはもうありません。`);
+                hasMoreMessages = false;
+                break;
+              }
               for (const message of messages) {
                 try {
                   await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
                     headers: { Authorization: token }
                   });
+                  console.log(`Deleted message ID: ${message.id}`);
                   totalDeleted++;
                   statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
-                  await sleep(0);
+                  await sleep(2000);
                 } catch (error) {
                   console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
                 }
               }
               offset += 25;
-              if (offset >= totalResults) { hasMore = false; break; }
+              if (offset >= totalResults) { break; }
             }
-          }
-        } else {
-          let offset = 0;
-          let hasMore = true;
-          while (hasMore) {
-            const params = { author_id: AUTHOR_ID, offset: offset };
-            let response;
+            // 再取得して、残っているメッセージがなければ抜ける
+            let remainingResponse;
             try {
-              response = await axios.get(`https://discord.com/api/v9/guilds/${guildId}/messages/search`, {
+              remainingResponse = await axios.get(endpoint, {
                 headers: { Authorization: token },
-                params: params
+                params: { author_id: AUTHOR_ID, offset: 0 }
               });
             } catch (error) {
-              addLog("全Guildメッセージ検索エラー (Server): " + error);
+              addLog("再取得エラー (Server): " + error);
               console.error(error);
               break;
             }
-            let messages = response.data.messages.flat();
-            const totalResults = response.data.total_results;
-            if (messages.length === 0) { hasMore = false; break; }
-            for (const message of messages) {
-              try {
-                await axios.delete(`https://discord.com/api/v9/channels/${message.channel_id}/messages/${message.id}`, {
-                  headers: { Authorization: token }
-                });
-                totalDeleted++;
-                statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
-                await sleep(0);
-              } catch (error) {
-                console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
-              }
+            const remainingMessages = remainingResponse.data.messages.flat();
+            if (remainingMessages.length === 0) {
+              addLog(`Guild ${guildId} の全メッセージ削除完了。`);
+              break;
+            } else {
+              addLog(`Guild ${guildId} にまだ ${remainingMessages.length} 件のメッセージがあります。再試行します。`);
             }
-            offset += 25;
-            if (offset >= totalResults) { hasMore = false; break; }
           }
         }
       }
       statusElement.textContent = `削除完了: ${totalDeleted} 件`;
-      addLog("サーバー削除完了: " + totalDeleted + "件");
+      addLog("サーバーメッセージ削除完了: " + totalDeleted + "件");
     });
   </script>
 </body>
