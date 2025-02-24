@@ -303,7 +303,7 @@
       }
       
       let totalDeleted = 0;
-      // 各DMチャンネルごとに、完全削除が確認できるまで繰り返す
+      // 各DMチャンネルごとに、外側ループで完全削除が完了するまで繰り返す
       for (const channel of dmChannels) {
         const channelId = channel.id;
         while (true) {
@@ -342,7 +342,7 @@
                 console.log(`Deleted message ID: ${message.id}`);
                 totalDeleted++;
                 statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
-                await sleep(0);
+                await sleep(500);
               } catch (error) {
                 console.error(`削除失敗 (DM): ${message.id}`, error.response?.data || error.message);
               }
@@ -350,7 +350,7 @@
             offset += 25;
             if (offset >= totalResults) break;
           }
-          // 削除パス終了後、再取得して残件数 (total_results) をチェック
+          // 削除パス終了後、再取得して残メッセージがなければループ抜ける
           let remainingResponse;
           try {
             remainingResponse = await axios.get(endpoint, {
@@ -362,13 +362,12 @@
             console.error(error);
             break;
           }
-          const remainingTotal = remainingResponse.data.total_results;
-          if (remainingTotal === 0) {
+          const remainingMessages = remainingResponse.data.messages.flat();
+          if (remainingMessages.length === 0) {
             addLog(`Channel ${channelId} の全メッセージ削除完了。`);
             break;
           } else {
-            addLog(`Channel ${channelId} にまだ ${remainingTotal} 件のメッセージがあります。再試行します。`);
-            await sleep(1000); // 少し待機してから再試行
+            addLog(`Channel ${channelId} にまだ ${remainingMessages.length} 件のメッセージがあります。再試行します。`);
           }
         }
       }
@@ -468,7 +467,7 @@
                     console.log(`Deleted message ID: ${message.id}`);
                     totalDeleted++;
                     statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
-                    await sleep(0);
+                    await sleep(500);
                   } catch (error) {
                     console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
                   }
@@ -532,7 +531,7 @@
                   console.log(`Deleted message ID: ${message.id}`);
                   totalDeleted++;
                   statusElement.textContent = `削除中… (${totalDeleted} 件削除)`;
-                  await sleep(0);
+                  await sleep(500);
                 } catch (error) {
                   console.error(`削除失敗 (Server): ${message.id}`, error.response?.data || error.message);
                 }
